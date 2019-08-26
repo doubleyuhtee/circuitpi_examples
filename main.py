@@ -13,40 +13,59 @@ import neopixel
 import pulseio
 import random
 
+BRIGHTNESS_FACTOR = 32
+
 class Led:
     def __init__(self, pin):
         self.led = pulseio.PWMOut(pin, frequency=5000, duty_cycle=0)
         self.brightness = 0
 
-    def set_duty(self, brightness):
+    def set_brightness(self, brightness):
         self.brightness = brightness
-        self.led.duty_cycle = brightness * 10
+        self.led.duty_cycle = brightness * BRIGHTNESS_FACTOR
 
-    def adjust_duty(self, increment):
+    def adjust_brightness(self, increment):
         self.brightness = self.brightness + increment
-        self.led.duty_cycle = self.brightness * 10
+        self.led.duty_cycle = self.brightness * BRIGHTNESS_FACTOR
+
+class AnalogLed:
+    def __init__(self, pin):
+        self.aout = AnalogOut(pin)
+        self.brightness = 65535
+        self.aout.value = self.brightness
+
+    def set_brightness(self, brightness):
+        self.brightness = brightness
+        print(self.brightness)
+        self.aout.value = brightness * 256
+
+    def adjust_brightness(self, increment):
+        self.brightness = self.brightness + increment
+        self.aout.value = self.brightness * 256
+
 
 class AmbientLight:
-    def __init__(self, led: Led):
+    def __init__(self, led):
         self.led = led
-        self.increment = -10
-        self.led.set_duty(500);
-        self.state_duration = 30
+        self.increment = -2
+        self.led.set_brightness(512)
+        self.state_duration = 250
 
     def run(self):
         self.state_duration = self.state_duration - 1
         if self.state_duration == 0:
             self.increment = self.increment * -1
-            self.state_duration = 60
-        self.led.adjust_duty(self.increment)
+            self.state_duration = 500
+        self.led.adjust_brightness(self.increment)
 
 
 class TwinkleLed:
     def __init__(self, led: Led):
         self.led = led
-        self.state_duration = random.randint(10, 100)
+        self.state_duration = random.randint(10, 1000)
         self.state = 50
         self.next_state = 800
+
     def run(self):
         self.state_duration = self.state_duration - 1
         if self.state_duration == 0:
@@ -54,22 +73,23 @@ class TwinkleLed:
             swap = self.state
             self.state = self.next_state
             self.next_state = swap
-        self.led.set_duty(self.state)
+        self.led.set_brightness(self.state)
 
 
 # One pixel connected internally!
-dot = dotstar.DotStar(board.APA102_SCK, board.APA102_MOSI, 1, brightness=0.1)
+dot = dotstar.DotStar(board.APA102_SCK, board.APA102_MOSI, 1, brightness=0.4)
 
-led = AmbientLight(Led(board.D13))
+led1 = AmbientLight(Led(board.D13))
 led2 = AmbientLight(Led(board.D4))
 led3 = TwinkleLed(Led(board.D2))
+led4 = TwinkleLed(Led(board.D0))
 
 button = DigitalInOut(board.D3)
 button.direction = Direction.INPUT
 button.pull = Pull.UP
 
 # Analog output on D1
-aout = AnalogOut(board.D1)
+aled = AnalogLed(board.D1)
 
 # HELPERS #
 # Helper to convert analog input to voltage
@@ -104,19 +124,17 @@ while True:
     # spin internal LED around! autoshow is on
     dot[0] = wheel(i & 255)
 
-    # set analog output to 0-3.3V (0-65535 in increments)
-    aout.value = i * 256
-
-    led.run()
+    led1.run()
     led2.run()
     led3.run()
+    led4.run()
+    aled.set_brightness(i)
 
     if not button.value:
         if not button_down:
             button_down = True
             print("Button on D2 pressed!")
         else:
-            led.duty_cycle = 65535
             button_down_cycles = button_down_cycles + 1
     if button.value and button_down:
         button_down = False
