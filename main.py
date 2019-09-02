@@ -29,58 +29,92 @@ class Led:
         self.led.duty_cycle = self.brightness * BRIGHTNESS_FACTOR
 
 class AnalogLed:
+    MAX_VALUE = 255
+    DELAY = 3
+    STATE_DURATION = 55
     def __init__(self, pin):
         self.aout = AnalogOut(pin)
-        self.brightness = 65535
-        self.aout.value = self.brightness
+        self.increment = -1
+        self.states = [
+            {
+                'brightness': 223
+            },
+            {
+                'brightness': 239
+            },
+            {
+                'brightness': AnalogLed.MAX_VALUE
+            }
+        ]
+        self.state_index = 0
+        self.state = self.states[self.state_index]
+        self.delay = AnalogLed.DELAY
+        self.state_duration = AnalogLed.STATE_DURATION
+        self.value = AnalogLed.MAX_VALUE
+        self.aout.value = AnalogLed.MAX_VALUE
 
-    def set_brightness(self, brightness):
-        self.brightness = brightness
-        print(self.brightness)
-        self.aout.value = brightness * 256
+    def adjust_brightness_factor(self):
+        self.state_index = self.state_index + 1
+        if self.state_index >= len(self.states):
+            self.state_index = 0
+        self.state = self.states[self.state_index]
+        self.aout.value = self.value * 256  # Max current brightness
+        self.increment = -1
+        self.state_duration = 65
 
-    def adjust_brightness(self, increment):
-        self.brightness = self.brightness + increment
-        self.aout.value = self.brightness * 256
-
-
-class AmbientLight:
-    def __init__(self, led):
-        self.led = led
-        self.increment = -2
-        self.led.set_brightness(512)
-        self.state_duration = 250
 
     def run(self):
-        self.state_duration = self.state_duration - 1
-        if self.state_duration == 0:
-            self.increment = self.increment * -1
-            self.state_duration = 500
-        self.led.adjust_brightness(self.increment)
+        if self.delay == 0:
+            self.delay = AnalogLed.DELAY
+            self.state_duration = self.state_duration - 1
+            if self.state_duration == 0:
+                self.increment = self.increment * -1
+                self.state_duration = AnalogLed.STATE_DURATION
+            self.value = self.value + self.increment
+            self.aout.value = self.value * self.state['brightness']
+        else:
+            self.aout.value = self.value * self.state['brightness']
+        self.delay = self.delay - 1
+
 
 
 class TwinkleLed:
     def __init__(self, led: Led):
         self.led = led
-        self.state_duration = random.randint(10, 1000)
-        self.state = 50
-        self.next_state = 800
+        self.state_duration = 1
+        self.states = [
+            {
+                'brightness': 50,
+                'min_duration': 100,
+                'max_duration': 1000
+            },
+            {
+                'brightness': 150,
+                'min_duration': 50,
+                'max_duration': 500
+            },
+            {
+                'brightness': 250,
+                'min_duration': 30,
+                'max_duration': 200
+            }
+        ]
+        self.current_state = self.states[0]
 
     def run(self):
         self.state_duration = self.state_duration - 1
         if self.state_duration == 0:
-            self.state_duration = random.randint(10,100)
-            swap = self.state
-            self.state = self.next_state
-            self.next_state = swap
-        self.led.set_brightness(self.state)
+            self.current_state = random.choice(self.states)
+            self.state_duration = random.randint(self.current_state['min_duration'],
+                                                 self.current_state['max_duration'])
+        self.led.set_brightness(self.current_state['brightness'])
 
 
 # One pixel connected internally!
 dot = dotstar.DotStar(board.APA102_SCK, board.APA102_MOSI, 1, brightness=0.4)
 
-led1 = AmbientLight(Led(board.D13))
-led2 = AmbientLight(Led(board.D4))
+led1 = TwinkleLed(Led(board.D13))
+led2 = TwinkleLed(Led(board.D4))
 led3 = TwinkleLed(Led(board.D2))
 led4 = TwinkleLed(Led(board.D0))
 
@@ -92,9 +126,6 @@ button.pull = Pull.UP
 aled = AnalogLed(board.D1)
 
 # HELPERS #
-# Helper to convert analog input to voltage
-def getVoltage(pin):
-    return (pin.value * 3.3) / 65536
 
 # Helper to give us a nice color swirl
 def wheel(pos):
@@ -128,11 +159,15 @@ while True:
     led2.run()
     led3.run()
     led4.run()
-    aled.set_brightness(i)
+    aled.run()
 
     if not button.value:
         if not button_down:
             button_down = True
+            BRIGHTNESS_FACTOR = BRIGHTNESS_FACTOR + 32
+            if BRIGHTNESS_FACTOR > 256:
+                BRIGHTNESS_FACTOR = 32
+            aled.adjust_brightness_factor()
             print("Button on D2 pressed!")
         else:
             button_down_cycles = button_down_cycles + 1
@@ -141,7 +176,6 @@ while True:
         print(button_down_cycles)
         button_down_cycles = 0
         circle_direction = circle_direction * -1
-
     i = (i+circle_direction) % 256  # run from 0 to 255
     if i < 0:
         i = 255
