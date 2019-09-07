@@ -13,8 +13,6 @@ import neopixel
 import pulseio
 import random
 
-BRIGHTNESS_FACTOR = 32
-
 class Led:
     def __init__(self, pin):
         self.led = pulseio.PWMOut(pin, frequency=5000, duty_cycle=0)
@@ -22,74 +20,69 @@ class Led:
 
     def set_brightness(self, brightness):
         self.brightness = brightness
-        self.led.duty_cycle = brightness * BRIGHTNESS_FACTOR
+        self.led.duty_cycle = brightness
 
     def adjust_brightness(self, increment):
         self.brightness = self.brightness + increment
-        self.led.duty_cycle = self.brightness * BRIGHTNESS_FACTOR
+        self.led.duty_cycle = self.brightness
 
-class AnalogLed:
+class PulseLed:
     MAX_VALUE = 255
-    DELAY = 3
-    STATE_DURATION = 55
-    def __init__(self, pin):
-        self.aout = AnalogOut(pin)
+    DELAY = 1
+    STATE_DURATION = 254
+    states = [
+        {
+            'brightness': 40
+        },
+        {
+            'brightness': 100
+        },
+        {
+            'brightness': MAX_VALUE
+        }
+    ]
+    def __init__(self, led):
+        self.led = led
         self.increment = -1
-        self.states = [
-            {
-                'brightness': 223
-            },
-            {
-                'brightness': 239
-            },
-            {
-                'brightness': AnalogLed.MAX_VALUE
-            }
-        ]
         self.state_index = 0
-        self.state = self.states[self.state_index]
-        self.delay = AnalogLed.DELAY
-        self.state_duration = AnalogLed.STATE_DURATION
-        self.value = AnalogLed.MAX_VALUE
-        self.aout.value = AnalogLed.MAX_VALUE
-
-    def adjust_brightness_factor(self):
-        self.state_index = self.state_index + 1
-        if self.state_index >= len(self.states):
-            self.state_index = 0
-        self.state = self.states[self.state_index]
-        self.aout.value = self.value * 256  # Max current brightness
-        self.increment = -1
-        self.state_duration = 65
-
+        self.state = PulseLed.states[self.state_index]
+        self.delay = PulseLed.DELAY
+        self.state_duration = PulseLed.STATE_DURATION
+        self.value = PulseLed.MAX_VALUE
 
     def run(self):
-        if self.delay == 0:
-            self.delay = AnalogLed.DELAY
-            self.state_duration = self.state_duration - 1
-            if self.state_duration == 0:
-                self.increment = self.increment * -1
-                self.state_duration = AnalogLed.STATE_DURATION
-            self.value = self.value + self.increment
-            self.aout.value = self.value * self.state['brightness']
-        else:
-            self.aout.value = self.value * self.state['brightness']
-        self.delay = self.delay - 1
+        self.delay = PulseLed.DELAY
+        self.state_duration = self.state_duration - 1
+        if self.state_duration == 0:
+            self.increment = self.increment * -1
+            self.state_duration = PulseLed.STATE_DURATION
+        self.value = self.value + self.increment
+        self.led.set_brightness(self.value * self.state['brightness'])
 
+    def advance_state(self):
+        self.state_index = self.state_index + 1
+        if self.state_index >= len(PulseLed.states):
+            self.state_index = 0
+        self.state = PulseLed.states[self.state_index]
+        self.value = PulseLed.MAX_VALUE
+        self.state_duration = PulseLed.STATE_DURATION
+        self.increment = -1
 
 
 class TwinkleLed:
+    multiplier = 255
+
     def __init__(self, led: Led):
         self.led = led
         self.state_duration = 1
         self.states = [
             {
-                'brightness': 50,
+                'brightness': 20,
                 'min_duration': 100,
                 'max_duration': 1000
             },
             {
-                'brightness': 150,
+                'brightness': 100,
                 'min_duration': 50,
                 'max_duration': 500
             },
@@ -107,25 +100,40 @@ class TwinkleLed:
             self.current_state = random.choice(self.states)
             self.state_duration = random.randint(self.current_state['min_duration'],
                                                  self.current_state['max_duration'])
-        self.led.set_brightness(self.current_state['brightness'])
+        self.led.set_brightness(self.current_state['brightness'] * TwinkleLed.multiplier)
 
+    @staticmethod
+    def update_brighness_range():
+        TwinkleLed.multiplier = TwinkleLed.multiplier + 32
+        if TwinkleLed.multiplier > 256:
+            TwinkleLed.multiplier = 32
+
+    def recalculate_brightness(self):
+        self.led.set_brightness(self.current_state['brightness'] * TwinkleLed.multiplier)
+
+        
+class AnalogButton:
+    def __init__(self, pin):
+        self.analog_in = AnalogIn(pin)
+
+    def down(self):
+        return self.analog_in.value < 200
 
 # One pixel connected internally!
 dot = dotstar.DotStar(board.APA102_SCK, board.APA102_MOSI, 1, brightness=0.4)
 
-led1 = TwinkleLed(Led(board.D13))
-led2 = TwinkleLed(Led(board.D4))
-led3 = TwinkleLed(Led(board.D2))
-led4 = TwinkleLed(Led(board.D0))
+button = AnalogButton(board.D1)
 
-button = DigitalInOut(board.D3)
-button.direction = Direction.INPUT
-button.pull = Pull.UP
+twinkle1 = TwinkleLed(Led(board.D13))
+twinkle2 = TwinkleLed(Led(board.D4))
+twinkle3 = TwinkleLed(Led(board.D2))
+twinkle4 = TwinkleLed(Led(board.D0))
+pulse1 = PulseLed(Led(board.D3))
 
-# Analog output on D1
-aled = AnalogLed(board.D1)
+# button = DigitalInOut(board.D3)
+# button.direction = Direction.INPUT
+# button.pull = Pull.UP
 
-# HELPERS #
 
 # Helper to give us a nice color swirl
 def wheel(pos):
@@ -151,32 +159,39 @@ button_down = False
 button_down_cycles = 0
 circle_direction = 1
 i=0
+skip = 5
+
 while True:
     # spin internal LED around! autoshow is on
-    dot[0] = wheel(i & 255)
+    skip = skip - 1
+    if skip == 0:
+        dot[0] = wheel(i & 255)
+        skip = 5
+        i = (i+circle_direction) % 256  # run from 0 to 255
+        if i < 0:
+            i = 255
 
-    led1.run()
-    led2.run()
-    led3.run()
-    led4.run()
-    aled.run()
 
-    if not button.value:
+    twinkle1.run()
+    twinkle2.run()
+    twinkle3.run()
+    twinkle4.run()
+    pulse1.run()
+
+    if button.down():
         if not button_down:
             button_down = True
-            BRIGHTNESS_FACTOR = BRIGHTNESS_FACTOR + 32
-            if BRIGHTNESS_FACTOR > 256:
-                BRIGHTNESS_FACTOR = 32
-            aled.adjust_brightness_factor()
+            pulse1.advance_state()
+            TwinkleLed.update_brighness_range()
+            twinkle1.recalculate_brightness()
+            twinkle2.recalculate_brightness()
+            twinkle3.recalculate_brightness()
+            twinkle4.recalculate_brightness()
             print("Button on D2 pressed!")
         else:
             button_down_cycles = button_down_cycles + 1
-    if button.value and button_down:
+    if not button.down():
         button_down = False
-        print(button_down_cycles)
         button_down_cycles = 0
         circle_direction = circle_direction * -1
-    i = (i+circle_direction) % 256  # run from 0 to 255
-    if i < 0:
-        i = 255
     time.sleep(0.01)  # make bigger to slow down
